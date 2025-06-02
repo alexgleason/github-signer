@@ -18,11 +18,15 @@ async function publishNostrEvent(templatePath, nsec) {
       nostrTools = require('nostr-tools');
     }
     
-    const { Relay, finalizeEvent, nip19, getPublicKey } = nostrTools;
+    // Import the correct modules
+    const { finalizeEvent } = require('nostr-tools/pure');
+    const { Relay } = require('nostr-tools/relay');
+    const { useWebSocketImplementation } = require('nostr-tools/relay');
+    const nip19 = require('nostr-tools/nip19');
     
-    // Import WebSocket
+    // Setup WebSocket for Node.js
     const WebSocket = require('ws');
-    global.WebSocket = WebSocket;
+    useWebSocketImplementation(WebSocket);
     
     // Read the event template
     const template = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
@@ -62,46 +66,26 @@ async function publishNostrEvent(templatePath, nsec) {
     
     console.log(`Publishing to ${relays.length} relays...`);
     
-    // Publish to each relay individually using direct Relay connections
+    // Publish to each relay individually - relay.publish() returns a Promise
     const results = await Promise.allSettled(
       relays.map(async (relayUrl) => {
         console.log(`Publishing to ${relayUrl}...`);
         
-        return new Promise(async (resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error(`Timeout publishing to ${relayUrl}`));
-          }, 15000);
+        try {
+          const relay = await Relay.connect(relayUrl);
+          console.log(`Connected to ${relayUrl}`);
           
-          let relay;
-          try {
-            relay = new Relay(relayUrl);
-            
-            await relay.connect();
-            console.log(`Connected to ${relayUrl}`);
-            
-            const pub = relay.publish(event);
-            
-            pub.on('ok', () => {
-              clearTimeout(timeout);
-              console.log(`✅ Successfully published to ${relayUrl}`);
-              relay.close();
-              resolve(relayUrl);
-            });
-            
-            pub.on('failed', (reason) => {
-              clearTimeout(timeout);
-              console.log(`❌ Failed to publish to ${relayUrl}: ${reason}`);
-              relay.close();
-              reject(new Error(`Failed to publish to ${relayUrl}: ${reason}`));
-            });
-            
-          } catch (error) {
-            clearTimeout(timeout);
-            console.log(`❌ Error connecting to ${relayUrl}: ${error.message}`);
-            if (relay) relay.close();
-            reject(error);
-          }
-        });
+          // relay.publish() returns a Promise that resolves when published
+          await relay.publish(event);
+          console.log(`✅ Successfully published to ${relayUrl}`);
+          
+          relay.close();
+          return relayUrl;
+          
+        } catch (error) {
+          console.log(`❌ Error with ${relayUrl}: ${error.message}`);
+          throw new Error(`Failed to publish to ${relayUrl}: ${error.message}`);
+        }
       })
     );
     

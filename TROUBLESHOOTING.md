@@ -14,13 +14,13 @@
 
 ### 2. "pub.on is not a function" Error
 
-**Problem**: This error occurs when the `SimplePool.publish()` method returns a different object type than expected.
+**Problem**: This error occurs because `relay.publish()` returns a Promise, not an EventEmitter with `.on()` methods.
 
-**Solution**: The workflow has been updated to use individual `Relay` connections instead of `SimplePool`. This provides more reliable publishing.
+**Solution**: The workflow has been updated to use the correct nostr-tools v2.x API with proper module imports and Promise-based publishing.
 
 **What changed**:
-- Old API: `pool.publish([relay], event)` returns object with `.on()` method
-- New API: `relay.publish(event)` on individual relay connections
+- Old API: `relay.publish(event).on('ok', callback)` ❌ Wrong - no .on() method
+- New API: `await relay.publish(event)` ✅ Correct - returns Promise
 
 ### 3. nostr-tools Import Errors
 
@@ -159,15 +159,27 @@ node publish-nostr-standalone.js events/your-event.json
 ## API Reference Changes
 
 ### nostr-tools v2.x Changes:
+- ✅ Use modular imports: `require('nostr-tools/pure')`, `require('nostr-tools/relay')`, etc.
 - ✅ Use `finalizeEvent(template, privateKey)` 
 - ❌ Don't use `getSignature(event, privateKey)` (deprecated)
 - ✅ Use `generateSecretKey()` for new keys
 - ✅ Use `getPublicKey(privateKey)` for public keys
 - ✅ Use `nip19.nsecEncode()` and `nip19.decode()` for key conversion
+- ✅ Use `await relay.publish(event)` (returns Promise)
+- ❌ Don't use `relay.publish(event).on()` (no EventEmitter)
+- ✅ Use `useWebSocketImplementation(WebSocket)` for Node.js
 
 ### Working Example:
 ```javascript
-const { Relay, finalizeEvent, generateSecretKey, getPublicKey, nip19 } = require('nostr-tools');
+// Correct imports for nostr-tools v2.x
+const { finalizeEvent, generateSecretKey, getPublicKey } = require('nostr-tools/pure');
+const { Relay } = require('nostr-tools/relay');
+const { useWebSocketImplementation } = require('nostr-tools/relay');
+const nip19 = require('nostr-tools/nip19');
+
+// Setup WebSocket for Node.js
+const WebSocket = require('ws');
+useWebSocketImplementation(WebSocket);
 
 // Create event template
 const template = {
@@ -180,18 +192,13 @@ const template = {
 // Sign and finalize
 const event = finalizeEvent(template, privateKey);
 
-// Publish to relay
-const relay = new Relay('wss://relay.damus.io');
-await relay.connect();
-const pub = relay.publish(event);
-
-pub.on('ok', () => {
+// Publish to relay - relay.publish() returns a Promise
+try {
+  const relay = await Relay.connect('wss://relay.damus.io');
+  await relay.publish(event);
   console.log('Published successfully!');
   relay.close();
-});
-
-pub.on('failed', (reason) => {
-  console.log('Failed to publish:', reason);
-  relay.close();
-});
+} catch (error) {
+  console.log('Failed to publish:', error.message);
+}
 ```

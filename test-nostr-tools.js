@@ -5,8 +5,9 @@ async function testNostrTools() {
   try {
     console.log('Testing nostr-tools functionality...');
     
-    // Import required functions
-    const { finalizeEvent, generateSecretKey, getPublicKey, nip19 } = require('nostr-tools');
+    // Import required functions using the correct module paths
+    const { finalizeEvent, generateSecretKey, getPublicKey } = require('nostr-tools/pure');
+    const nip19 = require('nostr-tools/nip19');
     
     // Generate a test private key
     const privateKey = generateSecretKey();
