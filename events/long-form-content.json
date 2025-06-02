@@ -1,0 +1,12 @@
+{
+  "kind": 30023,
+  "content": "# My Blog Post\n\nThis is a long-form content example that demonstrates how to publish articles to Nostr.\n\n## Features\n\n- Automatic publishing from GitHub\n- Markdown support\n- Custom relay configuration\n\n## Conclusion\n\nThis workflow makes it easy to publish content to Nostr directly from your repository!",
+  "tags": [
+    ["d", "my-blog-post-2024"],
+    ["title", "My Blog Post"],
+    ["summary", "A demonstration of publishing long-form content to Nostr"],
+    ["t", "blog"],
+    ["t", "nostr"],
+    ["t", "automation"]
+  ]
+}

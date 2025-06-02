@@ -1,0 +1,223 @@
+name: Publish Nostr Event
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'events/**/*.json'
+      - 'nostr-events/**/*.json'
+      - 'templates/**/*.json'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - master
+    paths:
+      - 'events/**/*.json'
+      - 'nostr-events/**/*.json'
+      - 'templates/**/*.json'
+
+jobs:
+  publish-nostr-event:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event.pull_request.merged == true)
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm install nostr-tools ws
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # For push events, compare with previous commit
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '\.(json)$' | grep -E '(events|nostr-events|templates)/' || true)
+          else
+            # For merged PRs, get files changed in the PR
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -E '\.(json)$' | grep -E '(events|nostr-events|templates)/' || true)
+          fi
+          
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Convert to JSON array for matrix strategy
+          if [ -n "$CHANGED_FILES" ]; then
+            FILES_JSON=$(echo "$CHANGED_FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "files=$FILES_JSON" >> $GITHUB_OUTPUT
+            echo "has_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "files=[]" >> $GITHUB_OUTPUT
+            echo "has_files=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Nostr publisher script
+        if: steps.changed-files.outputs.has_files == 'true'
+        run: |
+          cat > publish-nostr.js << 'EOF'
+          const { SimplePool, getEventHash, getSignature, nip19 } = require('nostr-tools');
+          const WebSocket = require('ws');
+          const fs = require('fs');
+          
+          // Polyfill WebSocket for nostr-tools
+          global.WebSocket = WebSocket;
+          
+          async function publishNostrEvent(templatePath, nsec) {
+            try {
+              console.log(`Processing template: ${templatePath}`);
+              
+              // Read the event template
+              const template = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+              
+              // Decode the private key
+              const { type, data } = nip19.decode(nsec);
+              if (type !== 'nsec') {
+                throw new Error('Invalid nsec format');
+              }
+              const privateKey = data;
+              
+              // Create the event
+              const event = {
+                kind: template.kind || 1,
+                created_at: Math.floor(Date.now() / 1000),
+                tags: template.tags || [],
+                content: template.content || '',
+                pubkey: '', // Will be set by getEventHash
+              };
+              
+              // Generate public key from private key
+              const { getPublicKey } = require('nostr-tools');
+              event.pubkey = getPublicKey(privateKey);
+              
+              // Generate event ID and signature
+              event.id = getEventHash(event);
+              event.sig = getSignature(event, privateKey);
+              
+              console.log('Event created:', JSON.stringify(event, null, 2));
+              
+              // Default relays (can be overridden in template)
+              const defaultRelays = [
+                'wss://relay.damus.io',
+                'wss://nos.lol',
+                'wss://relay.nostr.band',
+                'wss://nostr-pub.wellorder.net',
+                'wss://relay.current.fyi'
+              ];
+              
+              const relays = template.relays || defaultRelays;
+              
+              // Publish to relays
+              const pool = new SimplePool();
+              
+              console.log(`Publishing to ${relays.length} relays...`);
+              
+              const publishPromises = relays.map(async (relay) => {
+                try {
+                  console.log(`Publishing to ${relay}...`);
+                  const pub = pool.publish([relay], event);
+                  
+                  return new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                      reject(new Error(`Timeout publishing to ${relay}`));
+                    }, 10000);
+                    
+                    pub.on('ok', () => {
+                      clearTimeout(timeout);
+                      console.log(`✅ Successfully published to ${relay}`);
+                      resolve(relay);
+                    });
+                    
+                    pub.on('failed', (reason) => {
+                      clearTimeout(timeout);
+                      console.log(`❌ Failed to publish to ${relay}: ${reason}`);
+                      reject(new Error(`Failed to publish to ${relay}: ${reason}`));
+                    });
+                  });
+                } catch (error) {
+                  console.log(`❌ Error with ${relay}: ${error.message}`);
+                  throw error;
+                }
+              });
+              
+              // Wait for all publications (with some tolerance for failures)
+              const results = await Promise.allSettled(publishPromises);
+              
+              const successful = results.filter(r => r.status === 'fulfilled').length;
+              const failed = results.filter(r => r.status === 'rejected').length;
+              
+              console.log(`\nPublication summary:`);
+              console.log(`✅ Successful: ${successful}/${relays.length}`);
+              console.log(`❌ Failed: ${failed}/${relays.length}`);
+              
+              if (successful === 0) {
+                throw new Error('Failed to publish to any relays');
+              }
+              
+              console.log(`\n🎉 Event published successfully to ${successful} relay(s)!`);
+              console.log(`Event ID: ${event.id}`);
+              
+              // Close the pool
+              pool.close(relays);
+              
+            } catch (error) {
+              console.error('Error publishing Nostr event:', error);
+              process.exit(1);
+            }
+          }
+          
+          // Get command line arguments
+          const templatePath = process.argv[2];
+          const nsec = process.env.NOSTR_NSEC;
+          
+          if (!templatePath) {
+            console.error('Usage: node publish-nostr.js <template-path>');
+            process.exit(1);
+          }
+          
+          if (!nsec) {
+            console.error('NOSTR_NSEC environment variable is required');
+            process.exit(1);
+          }
+          
+          publishNostrEvent(templatePath, nsec);
+          EOF
+
+      - name: Publish Nostr events
+        if: steps.changed-files.outputs.has_files == 'true'
+        env:
+          NOSTR_NSEC: ${{ secrets.NOSTR_NSEC }}
+        run: |
+          FILES='${{ steps.changed-files.outputs.files }}'
+          echo "Processing files: $FILES"
+          
+          # Parse JSON array and process each file
+          echo "$FILES" | jq -r '.[]' | while read -r file; do
+            if [ -f "$file" ]; then
+              echo "Publishing Nostr event from: $file"
+              node publish-nostr.js "$file"
+              echo "---"
+            else
+              echo "File not found: $file"
+            fi
+          done
+
+      - name: Summary
+        if: steps.changed-files.outputs.has_files == 'true'
+        run: |
+          echo "✅ Nostr event publication workflow completed"
+          echo "📝 Processed files: ${{ steps.changed-files.outputs.files }}"
+          echo "🔑 Used NOSTR_NSEC from repository secrets"

@@ -1,0 +1,26 @@
+{
+  "name": "nostr-event-publisher",
+  "version": "1.0.0",
+  "description": "Automatically publish Nostr events from GitHub Actions",
+  "main": "validate-event.js",
+  "scripts": {
+    "validate": "node validate-event.js",
+    "validate-all": "find events nostr-events templates -name '*.json' 2>/dev/null | xargs -I {} node validate-event.js {}"
+  },
+  "keywords": [
+    "nostr",
+    "github-actions",
+    "automation",
+    "publishing"
+  ],
+  "dependencies": {
+    "nostr-tools": "^2.1.0",
+    "ws": "^8.14.0"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/your-repo.git"
+  },
+  "license": "MIT"
+}
