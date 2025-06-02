@@ -12,7 +12,17 @@
 - Old API: `getSignature(event, privateKey)`
 - New API: `finalizeEvent(eventTemplate, privateKey)`
 
-### 2. nostr-tools Import Errors
+### 2. "pub.on is not a function" Error
+
+**Problem**: This error occurs when the `SimplePool.publish()` method returns a different object type than expected.
+
+**Solution**: The workflow has been updated to use individual `Relay` connections instead of `SimplePool`. This provides more reliable publishing.
+
+**What changed**:
+- Old API: `pool.publish([relay], event)` returns object with `.on()` method
+- New API: `relay.publish(event)` on individual relay connections
+
+### 3. nostr-tools Import Errors
 
 **Problem**: Module import failures or version conflicts.
 
@@ -33,7 +43,7 @@
    npm install
    ```
 
-### 3. WebSocket Connection Issues
+### 4. WebSocket Connection Issues
 
 **Problem**: Relay connection failures or timeouts.
 
@@ -59,7 +69,7 @@
 }
 ```
 
-### 4. Invalid nsec Format
+### 5. Invalid nsec Format
 
 **Problem**: "Invalid nsec format" error.
 
@@ -70,7 +80,7 @@
 
 **Valid nsec example**: `nsec1abc123def456...` (64 characters after nsec1)
 
-### 5. GitHub Actions Workflow Not Triggering
+### 6. GitHub Actions Workflow Not Triggering
 
 **Problem**: Workflow doesn't run when files are changed.
 
@@ -80,7 +90,7 @@
 3. **File extension**: Must be `.json` files
 4. **Repository secrets**: `NOSTR_NSEC` must be configured
 
-### 6. Event Validation Errors
+### 7. Event Validation Errors
 
 **Problem**: JSON parsing or validation errors.
 
@@ -157,7 +167,7 @@ node publish-nostr-standalone.js events/your-event.json
 
 ### Working Example:
 ```javascript
-const { finalizeEvent, generateSecretKey, getPublicKey, nip19 } = require('nostr-tools');
+const { Relay, finalizeEvent, generateSecretKey, getPublicKey, nip19 } = require('nostr-tools');
 
 // Create event template
 const template = {
@@ -169,4 +179,19 @@ const template = {
 
 // Sign and finalize
 const event = finalizeEvent(template, privateKey);
+
+// Publish to relay
+const relay = new Relay('wss://relay.damus.io');
+await relay.connect();
+const pub = relay.publish(event);
+
+pub.on('ok', () => {
+  console.log('Published successfully!');
+  relay.close();
+});
+
+pub.on('failed', (reason) => {
+  console.log('Failed to publish:', reason);
+  relay.close();
+});
 ```

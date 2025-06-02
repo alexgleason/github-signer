@@ -1,0 +1,16 @@
+{
+  "kind": 1,
+  "content": "Hello Nostr! This event was automatically published from GitHub Actions.",
+  "tags": [
+    ["t", "github-actions"],
+    ["t", "automation"],
+    ["t", "nostr"]
+  ],
+  "relays": [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://nostr-pub.wellorder.net",
+    "wss://relay.current.fyi"
+  ]
+}

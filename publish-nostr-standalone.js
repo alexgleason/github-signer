@@ -18,7 +18,7 @@ async function publishNostrEvent(templatePath, nsec) {
       nostrTools = require('nostr-tools');
     }
     
-    const { SimplePool, finalizeEvent, nip19, getPublicKey } = nostrTools;
+    const { Relay, finalizeEvent, nip19, getPublicKey } = nostrTools;
     
     // Import WebSocket
     const WebSocket = require('ws');
@@ -60,49 +60,50 @@ async function publishNostrEvent(templatePath, nsec) {
     
     const relays = template.relays || defaultRelays;
     
-    // Publish to relays
-    const pool = new SimplePool();
-    
     console.log(`Publishing to ${relays.length} relays...`);
     
-    const publishPromises = relays.map(async (relay) => {
-      try {
-        console.log(`Publishing to ${relay}...`);
+    // Publish to each relay individually using direct Relay connections
+    const results = await Promise.allSettled(
+      relays.map(async (relayUrl) => {
+        console.log(`Publishing to ${relayUrl}...`);
         
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
           const timeout = setTimeout(() => {
-            reject(new Error(`Timeout publishing to ${relay}`));
-          }, 15000); // Increased timeout
+            reject(new Error(`Timeout publishing to ${relayUrl}`));
+          }, 15000);
           
+          let relay;
           try {
-            const pub = pool.publish([relay], event);
+            relay = new Relay(relayUrl);
+            
+            await relay.connect();
+            console.log(`Connected to ${relayUrl}`);
+            
+            const pub = relay.publish(event);
             
             pub.on('ok', () => {
               clearTimeout(timeout);
-              console.log(`✅ Successfully published to ${relay}`);
-              resolve(relay);
+              console.log(`✅ Successfully published to ${relayUrl}`);
+              relay.close();
+              resolve(relayUrl);
             });
             
             pub.on('failed', (reason) => {
               clearTimeout(timeout);
-              console.log(`❌ Failed to publish to ${relay}: ${reason}`);
-              reject(new Error(`Failed to publish to ${relay}: ${reason}`));
+              console.log(`❌ Failed to publish to ${relayUrl}: ${reason}`);
+              relay.close();
+              reject(new Error(`Failed to publish to ${relayUrl}: ${reason}`));
             });
             
           } catch (error) {
             clearTimeout(timeout);
+            console.log(`❌ Error connecting to ${relayUrl}: ${error.message}`);
+            if (relay) relay.close();
             reject(error);
           }
         });
-        
-      } catch (error) {
-        console.log(`❌ Error with ${relay}: ${error.message}`);
-        throw error;
-      }
-    });
-    
-    // Wait for all publications (with some tolerance for failures)
-    const results = await Promise.allSettled(publishPromises);
+      })
+    );
     
     const successful = results.filter(r => r.status === 'fulfilled').length;
     const failed = results.filter(r => r.status === 'rejected').length;
@@ -125,9 +126,6 @@ async function publishNostrEvent(templatePath, nsec) {
     console.log(`\n🎉 Event published successfully to ${successful} relay(s)!`);
     console.log(`Event ID: ${event.id}`);
     console.log(`Public key: ${event.pubkey}`);
-    
-    // Close the pool
-    pool.close(relays);
     
     // Give some time for connections to close
     await new Promise(resolve => setTimeout(resolve, 1000));
