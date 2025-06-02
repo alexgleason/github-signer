@@ -86,3 +86,26 @@ If no relays are specified in the template, events will be published to:
 - Keep your NOSTR_NSEC secret secure and never commit it to the repository
 - The workflow only runs on the main branch to prevent unauthorized publishing
 - Event templates are validated before signing and publishing
+
+## Troubleshooting
+
+If you encounter issues, check the [TROUBLESHOOTING.md](TROUBLESHOOTING.md) guide for common problems and solutions.
+
+## Testing
+
+Before pushing to production, you can test locally:
+
+```bash
+# Install dependencies
+npm install
+
+# Test nostr-tools functionality
+npm run test-nostr
+
+# Validate your event templates
+npm run validate events/your-event.json
+
+# Test publishing (requires NOSTR_NSEC environment variable)
+export NOSTR_NSEC="your_nsec_here"
+npm run publish events/your-event.json
+```

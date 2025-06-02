@@ -5,7 +5,9 @@
   "main": "validate-event.js",
   "scripts": {
     "validate": "node validate-event.js",
-    "validate-all": "find events nostr-events templates -name '*.json' 2>/dev/null | xargs -I {} node validate-event.js {}"
+    "validate-all": "find events nostr-events templates -name '*.json' 2>/dev/null | xargs -I {} node validate-event.js {}",
+    "test-nostr": "node test-nostr-tools.js",
+    "publish": "node publish-nostr-standalone.js"
   },
   "keywords": [
     "nostr",
@@ -14,7 +16,7 @@
     "publishing"
   ],
   "dependencies": {
-    "nostr-tools": "^2.1.0",
+    "nostr-tools": "^2.5.0",
     "ws": "^8.14.0"
   },
   "devDependencies": {},

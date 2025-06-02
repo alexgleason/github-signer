@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm init -y
-          npm install nostr-tools ws
+          npm install nostr-tools@^2.5.0 ws@^8.14.0
 
       - name: Get changed files
         id: changed-files
@@ -69,16 +69,26 @@ jobs:
         if: steps.changed-files.outputs.has_files == 'true'
         run: |
           cat > publish-nostr.js << 'EOF'
-          const { SimplePool, getEventHash, getSignature, nip19 } = require('nostr-tools');
-          const WebSocket = require('ws');
           const fs = require('fs');
-          
-          // Polyfill WebSocket for nostr-tools
-          global.WebSocket = WebSocket;
           
           async function publishNostrEvent(templatePath, nsec) {
             try {
               console.log(`Processing template: ${templatePath}`);
+              
+              // Import nostr-tools with error handling
+              let nostrTools;
+              try {
+                nostrTools = require('nostr-tools');
+              } catch (error) {
+                console.error('Failed to import nostr-tools:', error.message);
+                throw new Error('nostr-tools import failed');
+              }
+              
+              const { SimplePool, finalizeEvent, nip19 } = nostrTools;
+              
+              // Import and setup WebSocket
+              const WebSocket = require('ws');
+              global.WebSocket = WebSocket;
               
               // Read the event template
               const template = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
@@ -90,24 +100,21 @@ jobs:
               }
               const privateKey = data;
               
-              // Create the event
-              const event = {
+              // Create the event template
+              const eventTemplate = {
                 kind: template.kind || 1,
                 created_at: Math.floor(Date.now() / 1000),
                 tags: template.tags || [],
                 content: template.content || '',
-                pubkey: '', // Will be set by getEventHash
               };
               
-              // Generate public key from private key
-              const { getPublicKey } = require('nostr-tools');
-              event.pubkey = getPublicKey(privateKey);
+              console.log('Event template:', JSON.stringify(eventTemplate, null, 2));
               
-              // Generate event ID and signature
-              event.id = getEventHash(event);
-              event.sig = getSignature(event, privateKey);
+              // Finalize the event (this will add pubkey, id, and sig)
+              const event = finalizeEvent(eventTemplate, privateKey);
               
-              console.log('Event created:', JSON.stringify(event, null, 2));
+              console.log('Finalized event ID:', event.id);
+              console.log('Event pubkey:', event.pubkey);
               
               // Default relays (can be overridden in template)
               const defaultRelays = [
@@ -128,25 +135,33 @@ jobs:
               const publishPromises = relays.map(async (relay) => {
                 try {
                   console.log(`Publishing to ${relay}...`);
-                  const pub = pool.publish([relay], event);
                   
                   return new Promise((resolve, reject) => {
                     const timeout = setTimeout(() => {
                       reject(new Error(`Timeout publishing to ${relay}`));
-                    }, 10000);
+                    }, 15000);
                     
-                    pub.on('ok', () => {
+                    try {
+                      const pub = pool.publish([relay], event);
+                      
+                      pub.on('ok', () => {
+                        clearTimeout(timeout);
+                        console.log(`✅ Successfully published to ${relay}`);
+                        resolve(relay);
+                      });
+                      
+                      pub.on('failed', (reason) => {
+                        clearTimeout(timeout);
+                        console.log(`❌ Failed to publish to ${relay}: ${reason}`);
+                        reject(new Error(`Failed to publish to ${relay}: ${reason}`));
+                      });
+                      
+                    } catch (error) {
                       clearTimeout(timeout);
-                      console.log(`✅ Successfully published to ${relay}`);
-                      resolve(relay);
-                    });
-                    
-                    pub.on('failed', (reason) => {
-                      clearTimeout(timeout);
-                      console.log(`❌ Failed to publish to ${relay}: ${reason}`);
-                      reject(new Error(`Failed to publish to ${relay}: ${reason}`));
-                    });
+                      reject(error);
+                    }
                   });
+                  
                 } catch (error) {
                   console.log(`❌ Error with ${relay}: ${error.message}`);
                   throw error;
@@ -163,6 +178,13 @@ jobs:
               console.log(`✅ Successful: ${successful}/${relays.length}`);
               console.log(`❌ Failed: ${failed}/${relays.length}`);
               
+              // Log failed relays for debugging
+              results.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                  console.log(`❌ ${relays[index]}: ${result.reason.message}`);
+                }
+              });
+              
               if (successful === 0) {
                 throw new Error('Failed to publish to any relays');
               }
@@ -173,8 +195,12 @@ jobs:
               // Close the pool
               pool.close(relays);
               
+              // Give some time for connections to close
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
             } catch (error) {
               console.error('Error publishing Nostr event:', error);
+              console.error('Stack trace:', error.stack);
               process.exit(1);
             }
           }
